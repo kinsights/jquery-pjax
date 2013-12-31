@@ -710,6 +710,15 @@ var cacheMapping      = {}
 var cacheForwardStack = []
 var cacheBackStack    = []
 
+// Export cache for public use
+// This is so we can tell how long the user has been on
+// our site. Just checking window.history.length will give
+// you the entire length of the user's history which might span
+// multiple sites.
+pjax.cacheMapping = cacheMapping;
+pjax.cacheForwardStack = cacheForwardStack;
+pjax.cacheBackStack = cacheBackStack;
+
 // Push previous state id and container contents into the history
 // cache. Should be called in conjunction with `pushState` to save the
 // previous container contents.
