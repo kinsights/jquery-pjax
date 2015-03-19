@@ -22,11 +22,13 @@ if ($.support.pjax) {
 
     frame.$('#main').on('pjax:success', function() {
       equal(frame.location.pathname, "/hello.html")
+      equal(frame.location.search, "")
       start()
     })
     frame.$.pjax({
       url: "hello.html",
-      container: "#main"
+      container: "#main",
+      cache: false
     })
   })
 
@@ -90,10 +92,10 @@ if ($.support.pjax) {
     var frame = this.frame
 
     frame.window.scrollTo(0, 100)
-    equal(frame.window.scrollY, 100)
+    equal(frame.window.pageYOffset, 100)
 
     frame.$('#main').on('pjax:success', function() {
-      equal(frame.window.scrollY, 0)
+      equal(frame.window.pageYOffset, 0)
       start()
     })
     frame.$.pjax({
@@ -106,10 +108,10 @@ if ($.support.pjax) {
     var frame = this.frame
 
     frame.window.scrollTo(0, 100)
-    equal(frame.window.scrollY, 100)
+    equal(frame.window.pageYOffset, 100)
 
     frame.$('#main').on('pjax:success', function() {
-      equal(frame.window.scrollY, 100)
+      equal(frame.window.pageYOffset, 100)
       start()
     })
     frame.$.pjax({
@@ -123,12 +125,31 @@ if ($.support.pjax) {
     var frame = this.frame
 
     frame.evaledScriptLoaded = function() {
-      equal(true, frame.evaledSrcScript)
-      equal(true, frame.evaledInlineScript)
-      start()
+      equal(frame.evaledSrcScriptNum, 2)
+      deepEqual(frame.evaledInlineLog, ["one"])
+
+      frame.$.pjax({
+        url: "scripts.html?name=two",
+        container: "#main"
+      })
+
+      frame.$("#main").one("pjax:end", function() {
+        deepEqual(frame.evaledInlineLog, ["one", "two"])
+
+        goBack(frame, function() {
+          deepEqual(frame.evaledInlineLog, ["one", "two", "one"])
+
+          goForward(frame, function() {
+            deepEqual(frame.evaledInlineLog, ["one", "two", "one", "two"])
+            equal(frame.evaledSrcScriptNum, 2)
+            start()
+          })
+        })
+      })
     }
+
     frame.$.pjax({
-      url: "scripts.html",
+      url: "scripts.html?name=one",
       container: "#main"
     })
   })
@@ -215,7 +236,7 @@ if ($.support.pjax) {
     })
   })
 
-  asyncTest("sets hidden _pjax param on XHR GET request", function() {
+  asyncTest("sets hidden _pjax param on XHR GET request", 1, function() {
     var frame = this.frame
 
     frame.$('#main').on('pjax:success', function() {
@@ -225,6 +246,43 @@ if ($.support.pjax) {
     })
     frame.$.pjax({
       url: "env.html",
+      data: undefined,
+      container: "#main"
+    })
+  })
+
+  asyncTest("sets hidden _pjax param if array data is supplied", 1, function() {
+    var frame = this.frame
+
+    frame.$('#main').on('pjax:success', function() {
+      var env = JSON.parse(frame.$("#env").text())
+      deepEqual(env['rack.request.query_hash'], {
+        _pjax: '#main',
+        foo: 'bar'
+      })
+      start()
+    })
+    frame.$.pjax({
+      url: "env.html",
+      data: [{ name: "foo", value: "bar" }],
+      container: "#main"
+    })
+  })
+
+  asyncTest("sets hidden _pjax param if object data is supplied", 1, function() {
+    var frame = this.frame
+
+    frame.$('#main').on('pjax:success', function() {
+      var env = JSON.parse(frame.$("#env").text())
+      deepEqual(env['rack.request.query_hash'], {
+        _pjax: '#main',
+        foo: 'bar'
+      })
+      start()
+    })
+    frame.$.pjax({
+      url: "env.html",
+      data: { foo: "bar" },
       container: "#main"
     })
   })
@@ -293,6 +351,40 @@ if ($.support.pjax) {
     equal(frame.location.search, "?foo=1&bar=2")
   })
 
+  asyncTest("mixed containers", function() {
+    var frame = this.frame
+
+    frame.$.pjax({
+      url: "fragment.html",
+      container: "#main"
+    })
+
+    frame.$("#main").one("pjax:end", function() {
+      frame.$.pjax({
+        url: "aliens.html",
+        container: "#foo"
+      })
+
+      frame.$("#foo").one("pjax:end", function() {
+        equal(frame.$("#main > #foo > ul > li").last().text(), "aliens")
+
+        goBack(frame, function() {
+          equal(frame.$("#main > #foo").text().trim(), "Foo")
+
+          goBack(frame, function() {
+            equal(frame.$("#main > ul > li").first().text(), "home")
+
+            goForward(frame, function() {
+              goForward(frame, function() {
+                equal(frame.$("#main > #foo > ul > li").last().text(), "aliens")
+                start()
+              })
+            })
+          })
+        })
+      })
+    })
+  })
 
   asyncTest("only fragment is inserted", function() {
     var frame = this.frame
@@ -314,7 +406,7 @@ if ($.support.pjax) {
 
     frame.$('body').on('pjax:success', function(event, data) {
       equal(typeof data, 'string')
-      equal(frame.$("body > p").html().trim(), "Hello!")
+      equal(frame.$("body > #main > p").html().trim(), "Hello!")
       equal(frame.document.title, "Hello")
       start()
     })
@@ -536,6 +628,32 @@ if ($.support.pjax) {
     })
   })
 
+  asyncTest("triggers pjax:beforeReplace event from container", function() {
+    var frame = this.frame,
+        beforeContent = 'foo'
+
+    frame.$("#main")
+         .text(beforeContent)
+         .on("pjax:beforeReplace", function(event, contents, options) {
+      ok(event)
+      ok(contents)
+      equal($(event.target).text(), beforeContent)
+      equal(options.url, "hello.html")
+
+      ok(event.state.url.match("/hello.html"))
+      ok(event.previousState.url.match("/home.html"))
+      ok(frame.$.pjax.state.url.match("/hello.html"))
+    })
+    frame.$("#main").on("pjax:success", function(event) {
+      notEqual($(event.target).text(), beforeContent)
+      start()
+    })
+
+    frame.$.pjax({
+      url: "hello.html",
+      container: "#main"
+    })
+  })
 
   asyncTest("triggers pjax:success event from container", function() {
     var frame = this.frame
@@ -623,13 +741,17 @@ if ($.support.pjax) {
     var frame = this.frame
 
     frame.$.pjax({
-      url: "timeout.html",
+      url: "timeout.html#hello",
       container: "#main"
     })
+
+    equal(frame.location.pathname, "/timeout.html")
+    equal(frame.location.hash, "#hello")
 
     this.iframe.onload = function() {
       equal(frame.$("#main p").html(), "SLOW DOWN!")
       equal(frame.location.pathname, "/timeout.html")
+      equal(frame.location.hash, "#hello")
       start()
     }
   })
@@ -727,6 +849,46 @@ if ($.support.pjax) {
     }, 0)
   }
 
+  asyncTest("clicking back while loading cancels XHR", function() {
+    var frame = this.frame
+
+    frame.$('#main').on('pjax:timeout', function(event) {
+      event.preventDefault()
+    })
+
+    frame.$("#main").one('pjax:send', function() {
+
+      // Check that our request is aborted (need to check
+      // how robust this is across browsers)
+      frame.$("#main").one('pjax:complete', function(e, xhr, textStatus) {
+        equal(xhr.status, 0)
+        equal(textStatus, 'abort')
+      })
+
+      setTimeout(function() {
+        frame.history.back()
+      }, 250)
+
+      // Make sure the URL and content remain the same after the
+      // XHR would have arrived (delay on timeout.html is 1s)
+      setTimeout(function() {
+        var afterBackLocation = frame.location.pathname
+        var afterBackTitle = frame.document.title
+
+        setTimeout(function() {
+          equal(frame.location.pathname, afterBackLocation)
+          equal(frame.document.title, afterBackTitle)
+          start()
+        }, 1000)
+      }, 500)
+    })
+
+    frame.$.pjax({
+      url: "timeout.html",
+      container: "#main"
+    })
+  })
+
   asyncTest("popstate going back to page", function() {
     var frame = this.frame
 
@@ -781,11 +943,11 @@ if ($.support.pjax) {
     equal(frame.location.pathname, "/home.html")
 
     frame.window.scrollTo(0, 100)
-    equal(frame.window.scrollY, 100)
+    equal(frame.window.pageYOffset, 100)
 
     frame.$("#main").on("pjax:complete", function() {
       equal(frame.location.pathname, "/long.html")
-      equal(frame.window.scrollY, 0)
+      equal(frame.window.pageYOffset, 0)
 
       ok(frame.history.length > 1)
       goBack(frame, function() {
@@ -793,7 +955,7 @@ if ($.support.pjax) {
 
         // PENDING: Popstate scroll position restore doesn't seem to
         // work inside an iframe.
-        // equal(frame.window.scrollY, 100)
+        // equal(frame.window.pageYOffset, 100)
 
         start()
       })
@@ -828,10 +990,43 @@ if ($.support.pjax) {
     })
   })
 
-  // Test is fragile
+  asyncTest("popstate triggers pjax:beforeReplace event", function() {
+    var frame = this.frame,
+        originalContent = $(frame).html()
+
+    equal(frame.location.pathname, "/home.html")
+
+    frame.$('#main').on("pjax:complete", function() {
+      equal(frame.location.pathname, "/hello.html")
+      ok(frame.history.length > 1)
+
+      frame.$('#main').on('pjax:beforeReplace', function(event, contents, options) {
+        ok(event)
+        ok(contents)
+        equal(frame.location.pathname, "/home.html")
+        ok(options.url.match("/home.html"))
+        // Remember: the content hasn't yet been replaced.
+        notEqual($(event.target).html(), originalContent)
+
+        ok(event.state.url.match("/home.html"))
+        ok(event.previousState.url.match("/hello.html"))
+        ok(frame.$.pjax.state.url.match("/home.html"))
+
+        start()
+      })
+
+      goBack(frame, function() {})
+    })
+
+    frame.$.pjax({
+      url: "hello.html",
+      container: "#main"
+    })
+  })
+
   asyncTest("no initial pjax:popstate event", function() {
     var frame = this.frame
-    var count = 0;
+    var count = 0
 
     window.iframeLoad = function() {
       count++
@@ -845,19 +1040,16 @@ if ($.support.pjax) {
       } else if (count == 3) {
         equal(frame.location.pathname, "/env.html")
         frame.history.back()
-        setTimeout(function() { window.iframeLoad(frame) }, 1000)
       } else if (count == 4) {
         equal(frame.location.pathname, "/hello.html")
         frame.history.back()
-        setTimeout(function() { window.iframeLoad(frame) }, 1000)
       } else if (count == 5) {
         equal(frame.location.pathname, "/home.html")
         frame.history.forward()
-        setTimeout(function() { window.iframeLoad(frame) }, 1000)
       } else if (count == 6) {
-        // Should skip pjax:popstate since there's no initial pjax.state
         frame.$('#main').on('pjax:popstate', function(event) {
           if (count == 6) {
+            // Should skip pjax:popstate since there's no initial pjax.state
             ok(event.state.url.match("/hello.html"), event.state.url)
             ok(false)
           } else if (count == 7) {
@@ -870,15 +1062,140 @@ if ($.support.pjax) {
           if (count == 6) {
             count++
             frame.history.forward()
-            setTimeout(function() { window.iframeLoad(frame) }, 1000)
-          } else {
-            setTimeout(function() { start() }, 1000)
           }
         })
+
+        // Browsers that don't fire initial "popstate" should just resume
+        setTimeout(function() {
+          start()
+        }, 100)
       }
     }
 
     window.iframeLoad()
+  })
+
+  asyncTest("hitting the back button obeys maxCacheLength", function() {
+    var frame = this.frame
+    var count = 0
+    var didHitServer
+
+    // Reduce the maxCacheLength for this spec to make it easier to test.
+    frame.$.pjax.defaults.maxCacheLength = 1
+
+    // This event will fire only when we request a page from the server, so we
+    // can use it to detect a cache miss.
+    frame.$("#main").on("pjax:beforeSend", function() {
+      didHitServer = true
+    })
+
+    frame.$("#main").on("pjax:end", function() {
+      count++
+
+      // First, navigate twice.
+      if (count == 1) {
+        frame.$.pjax({url: "env.html", container: "#main"})
+      } else if (count == 2) {
+        frame.$.pjax({url: "hello.html", container: "#main"})
+      } else if (count == 3) {
+        // There should now be one item in the back cache.
+        didHitServer = false
+        frame.history.back()
+      } else if (count == 4) {
+        equal(frame.location.pathname, "/env.html", "Went backward")
+        equal(didHitServer, false, "Hit cache")
+        frame.history.back()
+      } else if (count == 5) {
+        equal(frame.location.pathname, "/hello.html", "Went backward")
+        equal(didHitServer, true, "Hit server")
+        start()
+      }
+    })
+
+    frame.$.pjax({url: "hello.html", container: "#main"})
+  })
+
+  asyncTest("hitting the forward button obeys maxCacheLength", function() {
+    var frame = this.frame
+    var count = 0
+    var didHitServer
+
+    // Reduce the maxCacheLength for this spec to make it easier to test.
+    frame.$.pjax.defaults.maxCacheLength = 1
+
+    // This event will fire only when we request a page from the server, so we
+    // can use it to detect a cache miss.
+    frame.$("#main").on("pjax:beforeSend", function() {
+      didHitServer = true
+    })
+
+    frame.$("#main").on("pjax:end", function() {
+      count++
+
+      if (count == 1) {
+        frame.$.pjax({url: "env.html", container: "#main"})
+      } else if (count == 2) {
+        frame.$.pjax({url: "hello.html", container: "#main"})
+      } else if (count == 3) {
+        frame.history.back()
+      } else if (count == 4) {
+        frame.history.back()
+      } else if (count == 5) {
+        // There should now be one item in the forward cache.
+        didHitServer = false
+        frame.history.forward()
+      } else if (count == 6) {
+        equal(frame.location.pathname, "/env.html", "Went forward")
+        equal(didHitServer, false, "Hit cache")
+        frame.history.forward()
+      } else if (count == 7) {
+        equal(frame.location.pathname, "/hello.html", "Went forward")
+        equal(didHitServer, true, "Hit server")
+        start()
+      }
+    })
+
+    frame.$.pjax({url: "hello.html", container: "#main"})
+  })
+
+  asyncTest("setting maxCacheLength to 0 disables caching", function() {
+    var frame = this.frame
+    var count = 0
+    var didHitServer
+
+    // Set maxCacheLength to 0 to disable caching completely.
+    frame.$.pjax.defaults.maxCacheLength = 0
+
+    // This event will fire only when we request a page from the server, so we
+    // can use it to detect a cache miss.
+    frame.$("#main").on("pjax:beforeSend", function() {
+      didHitServer = true
+    })
+
+    frame.$("#main").on("pjax:end", function() {
+      count++
+
+      if (count == 1) {
+        didHitServer = false
+        frame.$.pjax({url: "env.html", container: "#main"})
+      } else if (count == 2) {
+        equal(frame.location.pathname, "/env.html", "Navigated to a new page")
+        equal(didHitServer, true, "Hit server")
+        didHitServer = false
+        frame.history.back()
+      } else if (count == 3) {
+        equal(frame.location.pathname, "/hello.html", "Went backward")
+        equal(didHitServer, true, "Hit server")
+        didHitServer = false
+        frame.history.forward()
+      } else if (count == 4) {
+        equal(frame.location.pathname, "/env.html", "Went forward")
+        equal(didHitServer, true, "Hit server")
+        start()
+      }
+    })
+
+    frame.$.pjax({url: "hello.html", container: "#main"})
   })
 
   asyncTest("popstate preserves GET data", function() {
@@ -919,24 +1236,10 @@ if ($.support.pjax) {
     })
   })
 
-  asyncTest("follows redirect with X-PJAX-URL header", function() {
-    var frame = this.frame
-
-    frame.$('#main').on("pjax:success", function() {
-      equal(frame.location.pathname, "/hello.html")
-      equal(frame.$("#main > p").html().trim(), "Hello!")
-      start()
-    })
-    frame.$.pjax({
-      url: "redirect.html",
-      container: "#main"
-    })
-  })
-
   asyncTest("lazily sets initial $.pjax.state", function() {
     var frame = this.frame
 
-    ok(!frame.$.pjax.state)
+    equal(frame.$.pjax.state, null)
 
     frame.$('#main').on("pjax:success", function() {
       start()
@@ -946,24 +1249,28 @@ if ($.support.pjax) {
       container: "#main"
     })
 
-    ok(frame.$.pjax.state.id)
-    ok(frame.$.pjax.state.url.match("/home.html"))
-    equal(frame.$.pjax.state.container, "#main")
+    var initialState = frame.$.pjax.state
+    ok(initialState.id)
+    equal(initialState.url, "http://" + frame.location.host + "/home.html")
+    equal(initialState.container, "#main")
   })
 
   asyncTest("updates $.pjax.state to new page", function() {
     var frame = this.frame
 
     frame.$('#main').on("pjax:success", function() {
-      ok(frame.$.pjax.state.id)
-      ok(frame.$.pjax.state.url.match("/hello.html"))
-      equal(frame.$.pjax.state.container, "#main")
+      var state = frame.$.pjax.state
+      ok(state.id)
+      equal(state.url, "http://" + frame.location.host + "/hello.html#new")
+      equal(state.container, "#main")
       start()
     })
     frame.$.pjax({
-      url: "hello.html",
+      url: "hello.html#new",
       container: "#main"
     })
+
+    var initialState = frame.$.pjax.state
   })
 
   asyncTest("new id is generated for new pages", function() {
@@ -1010,5 +1317,76 @@ if ($.support.pjax) {
 
     ok(frame.$.pjax.state.id)
     oldId = frame.$.pjax.state.id
+  })
+
+  asyncTest("handles going back to pjaxed state after reloading a fragment navigation", function() {
+    var iframe = this.iframe
+    var frame = this.frame
+    var supportsHistoryState = 'state' in window.history
+
+    // Get some pjax state in the history.
+    frame.$.pjax({
+      url: "hello.html",
+      container: "#main",
+    })
+    frame.$("#main").on("pjax:complete", function() {
+      var state = frame.history.state
+      ok(frame.$.pjax.state)
+      if (supportsHistoryState)
+        ok(frame.history.state)
+
+      // Navigate to a fragment, which will result in a new history entry with
+      // no state object. $.pjax.state remains unchanged however.
+      iframe.src = frame.location.href + '#foo'
+      ok(frame.$.pjax.state)
+      if (supportsHistoryState)
+        ok(!frame.history.state)
+
+      // Reload the frame. This will clear out $.pjax.state.
+      frame.location.reload()
+      $(iframe).one("load", function() {
+        ok(!frame.$.pjax.state)
+        if (supportsHistoryState)
+          ok(!frame.history.state)
+
+        // Go back to #main. We'll get a popstate event with a pjax state
+        // object attached from the initial pjax navigation, even though
+        // $.pjax.state is null.
+        window.iframeLoad = function() {
+          ok(frame.$.pjax.state)
+          if (supportsHistoryState) {
+            ok(frame.history.state)
+            equal(frame.$.pjax.state.id, state.id)
+          }
+          start()
+        }
+        frame.history.back()
+      })
+    })
+  })
+
+  asyncTest("handles going back to page after loading an error page", function() {
+    var frame = this.frame
+    var iframe = this.iframe
+
+    equal(frame.location.pathname, "/home.html")
+    equal(frame.document.title, "Home")
+
+    $(iframe).one("load", function() {
+
+      window.iframeLoad = function() {
+        equal(frame.location.pathname, "/home.html")
+        equal(frame.document.title, "Home")
+
+        start()
+      }
+
+      frame.history.back()
+    })
+
+    frame.$.pjax({
+      url: "boom_sans_pjax.html",
+      container: "#main"
+    })
   })
 }
